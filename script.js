@@ -2,11 +2,10 @@
 const clientId = "147934510488-allie69121uoboqbr26nhql7u0205res.apps.googleusercontent.com";
 
 function handleCredentialResponse(response) {
-    // Decode JWT to get user info
     const payload = JSON.parse(atob(response.credential.split('.')[1]));
     document.getElementById("fileInput").style.display = "block";
-    document.getElementById("deleteSelectedBtn").style.display = "block";
-    document.getElementById("uploadBtn").style.display = "block";
+    document.getElementById("deleteSelectedBtn").style.display = "inline-block";
+    document.getElementById("uploadBtn").style.display = "inline-block";
     document.getElementById("uploadStatus").innerText = `Welcome, ${payload.name}! Select files to upload.`;
 }
 
@@ -17,19 +16,21 @@ window.onload = function () {
         callback: handleCredentialResponse,
     });
     google.accounts.id.renderButton(
-        document.querySelector(".g_id_signin"), // Render on this element
-        { theme: "outline", size: "large", text: "signin_with", logo_alignment: "left" } // Button customization
+        document.querySelector(".g_id_signin"),
+        { theme: "outline", size: "large", text: "signin_with", logo_alignment: "left" }
     );
-    google.accounts.id.prompt(); // Automatically prompt for sign-in
+    google.accounts.id.prompt();
 };
 
 // File Handling Variables
 let selectedFiles = [];
-
-// File Selection
 const fileInput = document.getElementById("fileInput");
 const fileList = document.getElementById("fileList");
+const deleteSelectedBtn = document.getElementById("deleteSelectedBtn");
+const uploadBtn = document.getElementById("uploadBtn");
+const uploadStatus = document.getElementById("uploadStatus");
 
+// File Selection
 fileInput.addEventListener("change", () => {
     selectedFiles = Array.from(fileInput.files);
     displayFileList();
@@ -40,54 +41,68 @@ function displayFileList() {
     fileList.innerHTML = "";
     if (selectedFiles.length === 0) {
         fileList.innerText = "No files selected.";
+        uploadBtn.disabled = true;
         return;
     }
+    uploadBtn.disabled = false;
+
     selectedFiles.forEach((file, index) => {
         const fileItem = document.createElement("div");
         fileItem.className = "file-item";
         fileItem.innerHTML = `
-            <input type="checkbox" id="file-${index}" data-index="${index}">
-            <label for="file-${index}">${file.name} (${(file.size / 1024).toFixed(2)} KB)</label>
+            <span>${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>
+            <button class="delete-btn" data-index="${index}">Delete</button>
         `;
         fileList.appendChild(fileItem);
+    });
+
+    document.querySelectorAll(".delete-btn").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+            const index = parseInt(e.target.getAttribute("data-index"));
+            selectedFiles.splice(index, 1);
+            displayFileList();
+        });
     });
 }
 
 // Delete Selected Files
-document.getElementById("deleteSelectedBtn").addEventListener("click", () => {
-    const selectedCheckboxes = document.querySelectorAll(".file-item input[type='checkbox']:checked");
-    selectedCheckboxes.forEach((checkbox) => {
-        const index = parseInt(checkbox.getAttribute("data-index"));
-        selectedFiles.splice(index, 1);
-    });
+deleteSelectedBtn.addEventListener("click", () => {
+    selectedFiles = [];
     displayFileList();
 });
 
 // Upload Files
-document.getElementById("uploadBtn").addEventListener("click", async () => {
+uploadBtn.addEventListener("click", async () => {
     if (selectedFiles.length === 0) {
-        alert("No files to upload.");
+        alert("No files selected. Please choose files first.");
         return;
     }
 
-    const uploadStatus = document.getElementById("uploadStatus");
-    uploadStatus.innerText = "Uploading files, please wait...";
-    
+    uploadStatus.innerHTML = "";
     for (const file of selectedFiles) {
+        const progressBar = document.createElement("div");
+        progressBar.className = "progress-bar";
+        progressBar.innerHTML = `
+            <div class="progress-bar-inner" style="width: 0%;"></div>
+            <span>${file.name} - Uploading...</span>
+        `;
+        uploadStatus.appendChild(progressBar);
+
         try {
-            await uploadFileToDrive(file);
-            uploadStatus.innerText = `${file.name} uploaded successfully!`;
+            await uploadFileToDrive(file, progressBar);
+            progressBar.querySelector(".progress-bar-inner").style.width = "100%";
+            progressBar.querySelector("span").innerText = `${file.name} - Upload complete!`;
         } catch (error) {
-            uploadStatus.innerText = `Error uploading ${file.name}: ${error.message}`;
+            progressBar.querySelector("span").innerText = `${file.name} - Upload failed: ${error.message}`;
         }
     }
-    uploadStatus.innerText = "All files uploaded!";
-    selectedFiles = []; // Clear file list after upload
+
+    selectedFiles = [];
     displayFileList();
 });
 
 // Google Drive Upload Function
-async function uploadFileToDrive(file) {
+async function uploadFileToDrive(file, progressBar) {
     const accessToken = gapi.auth.getToken().access_token;
 
     const metadata = {
@@ -99,13 +114,26 @@ async function uploadFileToDrive(file) {
     formData.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
     formData.append("file", file);
 
-    const response = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
-        method: "POST",
-        headers: new Headers({ Authorization: `Bearer ${accessToken}` }),
-        body: formData,
-    });
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", true);
+    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
 
-    if (!response.ok) {
-        throw new Error("Upload failed");
-    }
+    xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+            const percentComplete = (event.loaded / event.total) * 100;
+            progressBar.querySelector(".progress-bar-inner").style.width = `${percentComplete}%`;
+        }
+    };
+
+    return new Promise((resolve, reject) => {
+        xhr.onload = () => {
+            if (xhr.status === 200) {
+                resolve();
+            } else {
+                reject(new Error(xhr.statusText));
+            }
+        };
+        xhr.onerror = () => reject(new Error("Network Error"));
+        xhr.send(formData);
+    });
 }
